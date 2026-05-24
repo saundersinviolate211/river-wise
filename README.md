@@ -2,6 +2,10 @@
 
 RiverWise is a Home Assistant custom dashboard card for NOAA/NWS National Water Prediction Service gauges. It can show river, lake, reservoir, tailwater, and flood gauge data using NWPS JSON APIs.
 
+![RiverWise card](images/river-wise-card.png)
+
+![RiverWise visual editor](images/river-wise-editor.png)
+
 ## Features
 
 - Current gauge name, ID, stage, flow, trend, and update time
