@@ -1149,3 +1149,11 @@ if (!customElements.get("river-wise-card")) {
 if (!customElements.get("river-wise-card-editor")) {
   customElements.define("river-wise-card-editor", RiverWiseCardEditor);
 }
+
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "river-wise-card",
+  name: "RiverWise Card",
+  description: "NOAA/NWS river, lake, reservoir, and flood gauge card",
+  preview: true,
+});
