@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2.3
+
+### Changed
+
+- UK Environment Agency station dropdown now filters out stations without a current usable level reading.
+- UK measure selection now prefers current, unit-bearing stage measures over stale or unitless measures.
+
+### Fixed
+
+- Fixed UK stations whose `measures` metadata is returned as a single object instead of an array.
+- Fixed several UK stations rendering no hydrograph or no stage because RiverWise selected an old `---` unit measure first.
+
 ## 0.2.2
 
 ### Changed

@@ -214,12 +214,12 @@ class RiverWiseCard extends HTMLElement {
       throw new Error("RiverWise UK provider requires a station reference");
     }
 
-    const stationUrl = `https://environment.data.gov.uk/flood-monitoring/id/stations/${encodeURIComponent(stationId)}`;
+    const stationUrl = `https://environment.data.gov.uk/flood-monitoring/id/stations/${encodeURIComponent(stationId)}?_view=full`;
     debug.endpoint = stationUrl;
 
     const stationData = await this.fetchJson(stationUrl);
     const station = stationData && stationData.items ? stationData.items : {};
-    const measures = Array.isArray(station.measures) ? station.measures : [];
+    const measures = this.eaMeasures(station);
     const levelMeasure = this.pickEaMeasure(measures, "level");
     const flowMeasure = this.pickEaMeasure(measures, "flow");
 
@@ -298,11 +298,47 @@ class RiverWiseCard extends HTMLElement {
   }
 
   pickEaMeasure(measures, parameter) {
-    const matching = measures.filter((measure) => measure && measure.parameter === parameter);
-    return matching.find((measure) => String(measure.qualifier || "").toLowerCase() === "stage")
-      || matching.find((measure) => String(measure.qualifier || "").toLowerCase().includes("stage"))
-      || matching[0]
+    const matching = this.eaMeasures({ measures }).filter((measure) => measure && measure.parameter === parameter);
+    return matching
+      .sort((a, b) => this.eaMeasureScore(b) - this.eaMeasureScore(a))[0]
       || null;
+  }
+
+  eaMeasures(station) {
+    const measures = station && station.measures;
+    if (Array.isArray(measures)) return measures;
+    if (measures && typeof measures === "object") return [measures];
+    return [];
+  }
+
+  eaMeasureScore(measure) {
+    if (!measure) return -1;
+    const qualifier = String(measure.qualifier || "").toLowerCase();
+    const unitName = String(measure.unitName || "").trim();
+    const latestReading = measure.latestReading;
+    let score = 0;
+    if (latestReading && typeof latestReading === "object" && this.validNumber(latestReading.value) !== null) score += 100;
+    if (unitName && unitName !== "---") score += 40;
+    if (qualifier === "stage") score += 30;
+    else if (qualifier.includes("stage")) score += 15;
+    if (unitName === "mASD" || unitName === "m") score += 10;
+    if (measure.period && Number(measure.period) <= 900) score += 5;
+    return score;
+  }
+
+  hasUsableEaLevelMeasure(station) {
+    const measure = this.pickEaMeasure(this.eaMeasures(station), "level");
+    if (!measure) return false;
+    const unitName = String(measure.unitName || "").trim();
+    const latestReading = measure.latestReading;
+    return Boolean(
+      measure["@id"]
+      && unitName
+      && unitName !== "---"
+      && latestReading
+      && typeof latestReading === "object"
+      && this.validNumber(latestReading.value) !== null
+    );
   }
 
   normalizeEaReadings(items) {
@@ -962,6 +998,56 @@ class RiverWiseCardEditor extends HTMLElement {
     return `https://api.water.noaa.gov/nwps/v1/gauges?${params.toString()}`;
   }
 
+  eaMeasures(station) {
+    const measures = station && station.measures;
+    if (Array.isArray(measures)) return measures;
+    if (measures && typeof measures === "object") return [measures];
+    return [];
+  }
+
+  validNumber(value) {
+    return typeof value === "number" && Number.isFinite(value) && value > -900
+      ? value
+      : null;
+  }
+
+  eaMeasureScore(measure) {
+    if (!measure) return -1;
+    const qualifier = String(measure.qualifier || "").toLowerCase();
+    const unitName = String(measure.unitName || "").trim();
+    const latestReading = measure.latestReading;
+    let score = 0;
+    if (latestReading && typeof latestReading === "object" && this.validNumber(latestReading.value) !== null) score += 100;
+    if (unitName && unitName !== "---") score += 40;
+    if (qualifier === "stage") score += 30;
+    else if (qualifier.includes("stage")) score += 15;
+    if (unitName === "mASD" || unitName === "m") score += 10;
+    if (measure.period && Number(measure.period) <= 900) score += 5;
+    return score;
+  }
+
+  pickEaMeasure(measures, parameter) {
+    const matching = this.eaMeasures({ measures }).filter((measure) => measure && measure.parameter === parameter);
+    return matching
+      .sort((a, b) => this.eaMeasureScore(b) - this.eaMeasureScore(a))[0]
+      || null;
+  }
+
+  hasUsableEaLevelMeasure(station) {
+    const measure = this.pickEaMeasure(this.eaMeasures(station), "level");
+    if (!measure) return false;
+    const unitName = String(measure.unitName || "").trim();
+    const latestReading = measure.latestReading;
+    return Boolean(
+      measure["@id"]
+      && unitName
+      && unitName !== "---"
+      && latestReading
+      && typeof latestReading === "object"
+      && this.validNumber(latestReading.value) !== null
+    );
+  }
+
   async loadStateGaugeOptions(state) {
     const selectedState = String(state || "").toUpperCase();
     if (!selectedState || !RIVER_WISE_STATE_BBOXES[selectedState]) return;
@@ -1015,7 +1101,7 @@ class RiverWiseCardEditor extends HTMLElement {
       const data = await response.json();
       const stations = Array.isArray(data.items) ? data.items : [];
       this.ukStationOptions = stations
-        .filter((station) => station && (station.stationReference || station.notation) && station.label)
+        .filter((station) => station && (station.stationReference || station.notation) && station.label && this.hasUsableEaLevelMeasure(station))
         .sort((a, b) => String(a.label).localeCompare(String(b.label)));
       this.ukStationLoadedOnce = true;
     } catch (error) {
