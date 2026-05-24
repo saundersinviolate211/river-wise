@@ -1,4 +1,3 @@
-ok its live but the read me is kinda lacking can you adjust it and change to 0.1.2
 
 
 # RiverWise Card
