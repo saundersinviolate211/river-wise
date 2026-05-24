@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.2
+
+### Changed
+
+- Reworked the UK Environment Agency visual editor into a loaded station dropdown with a live filter.
+- UK station filtering now matches station name, river, town, and station code.
+
+### Fixed
+
+- Fixed the UK station search button reading stale text when a user typed a search and clicked immediately.
+
 ## 0.2.1
 
 ### Added
