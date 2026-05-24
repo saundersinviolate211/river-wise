@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2.5
+
+### Added
+
+- Added TideWise UK tides planning notes based on RiverWise UK provider lessons.
+
+### Fixed
+
+- Fixed the UK station picker single-result case where one matching station could be visible but not selectable.
+- Added an explicit "Use selected station" button for the UK station dropdown.
+- Cleaned up the 0.2.5 release-note plan so HACS/GitHub install markdown can be published without swallowing following text into the code block.
+
 ## 0.2.4
 
 ### Fixed

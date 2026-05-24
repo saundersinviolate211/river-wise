@@ -1353,6 +1353,11 @@ class RiverWiseCardEditor extends HTMLElement {
         this.loadUkStationOptions(input ? input.value : this.ukStationFilter);
       });
     }
+
+    const ukUseButton = this.shadowRoot.querySelector("#use-uk-station");
+    if (ukUseButton) {
+      ukUseButton.addEventListener("click", () => this.useSelectedUkStation());
+    }
   }
 
   renderUsEditor() {
@@ -1404,6 +1409,7 @@ class RiverWiseCardEditor extends HTMLElement {
         <select id="uk-station-select" data-key="uk_station_select" ${this.ukStationLoading ? "disabled" : ""}>
           ${this.renderUkStationOptions()}
         </select>
+        <button type="button" id="use-uk-station" ${this.ukStationLoading || !this.filteredUkStationOptions().length ? "disabled" : ""}>Use selected station</button>
         <div id="uk-station-count" class="hint-block">
           ${this.renderUkStationCountText()}
           ${this.ukStationError ? `<br><span class="error">Station search failed: ${this.escape(this.ukStationError)}</span>` : ""}
@@ -1467,7 +1473,7 @@ class RiverWiseCardEditor extends HTMLElement {
     const options = [];
 
     if (!hasSelected && selectedStation) {
-      options.push(`<option value="${this.escape(selectedStation)}" selected>${this.escape(selectedStation)} - current station</option>`);
+      options.push(`<option value="${this.escape(selectedStation)}" ${stations.length ? "" : "selected"}>${this.escape(selectedStation)} - current station</option>`);
     }
 
     if (!this.ukStationOptions.length) {
@@ -1520,8 +1526,12 @@ class RiverWiseCardEditor extends HTMLElement {
   updateUkStationDropdown() {
     const select = this.shadowRoot && this.shadowRoot.querySelector("#uk-station-select");
     const count = this.shadowRoot && this.shadowRoot.querySelector("#uk-station-count");
+    const useButton = this.shadowRoot && this.shadowRoot.querySelector("#use-uk-station");
     if (select) {
       select.innerHTML = this.renderUkStationOptions();
+    }
+    if (useButton) {
+      useButton.disabled = this.ukStationLoading || !this.filteredUkStationOptions().length;
     }
     if (count) {
       count.innerHTML = `
@@ -1529,6 +1539,22 @@ class RiverWiseCardEditor extends HTMLElement {
         ${this.ukStationError ? `<br><span class="error">Station search failed: ${this.escape(this.ukStationError)}</span>` : ""}
       `;
     }
+  }
+
+  useSelectedUkStation() {
+    const select = this.shadowRoot && this.shadowRoot.querySelector("#uk-station-select");
+    const value = select ? String(select.value || "").trim() : "";
+    if (!value) return;
+
+    const selectedOption = select.selectedOptions && select.selectedOptions[0];
+    const selectedName = selectedOption ? selectedOption.dataset.name : "";
+    this.commitConfig({
+      ...this.config,
+      provider: "uk_ea",
+      uk_station: value,
+      gauge: value,
+      title: selectedName || this.config.title,
+    });
   }
 
   renderToggle(key, label) {
