@@ -113,6 +113,7 @@ class RiverWiseCard extends HTMLElement {
     }
 
     this.config = {
+      provider: "us_nwps",
       title: "RiverWise",
       units: "english",
       show_forecast: true,
@@ -143,6 +144,7 @@ class RiverWiseCard extends HTMLElement {
 
   static getStubConfig() {
     return {
+      provider: "us_nwps",
       title: "Ohio River at Meldahl Dam",
       gauge: "MELO1",
       gauge_state: "OH",
@@ -158,6 +160,7 @@ class RiverWiseCard extends HTMLElement {
 
   async load() {
     const debug = {
+      provider: this.config.provider || "us_nwps",
       endpoint: this.endpoint(),
       gaugeMetadataReceived: false,
       observedDataCount: 0,
@@ -169,6 +172,12 @@ class RiverWiseCard extends HTMLElement {
     };
 
     try {
+      if (this.config.provider === "uk_ea") {
+        const model = await this.loadUkEa(debug);
+        this.render(model);
+        return;
+      }
+
       const metadataPromise = this.fetchJson(this.endpoint());
       const observedPromise = this.fetchJson(this.endpoint("/stageflow/observed"));
       const forecastPromise = this.config.show_forecast
@@ -197,6 +206,115 @@ class RiverWiseCard extends HTMLElement {
       throw new Error(`${response.status} ${response.statusText}`);
     }
     return response.json();
+  }
+
+  async loadUkEa(debug) {
+    const stationId = String(this.config.uk_station || this.config.gauge || "").trim();
+    if (!stationId) {
+      throw new Error("RiverWise UK provider requires a station reference");
+    }
+
+    const stationUrl = `https://environment.data.gov.uk/flood-monitoring/id/stations/${encodeURIComponent(stationId)}`;
+    debug.endpoint = stationUrl;
+
+    const stationData = await this.fetchJson(stationUrl);
+    const station = stationData && stationData.items ? stationData.items : {};
+    const measures = Array.isArray(station.measures) ? station.measures : [];
+    const levelMeasure = this.pickEaMeasure(measures, "level");
+    const flowMeasure = this.pickEaMeasure(measures, "flow");
+
+    if (!levelMeasure || !levelMeasure["@id"]) {
+      throw new Error(`No Environment Agency level measure found for ${stationId}`);
+    }
+
+    const readingsUrl = `${this.httpsUrl(levelMeasure["@id"])}/readings?_sorted&_limit=288`;
+    const readingsData = await this.fetchJson(readingsUrl);
+    const observedPoints = this.normalizeEaReadings(readingsData && readingsData.items);
+    const latest = observedPoints.length ? observedPoints[observedPoints.length - 1] : null;
+    const previous = observedPoints.length > 4
+      ? observedPoints[observedPoints.length - 5]
+      : observedPoints.length > 1
+        ? observedPoints[observedPoints.length - 2]
+        : null;
+
+    let flow = null;
+    let flowUnit = "";
+    if (flowMeasure && flowMeasure["@id"]) {
+      try {
+        const flowData = await this.fetchJson(`${this.httpsUrl(flowMeasure["@id"])}/readings?latest`);
+        const flowItems = Array.isArray(flowData.items) ? flowData.items : [];
+        const latestFlow = flowItems.length ? flowItems[flowItems.length - 1] : null;
+        flow = this.validNumber(latestFlow && latestFlow.value);
+        flowUnit = flowMeasure.unitName || "";
+      } catch (error) {
+        debug.fallbackBehavior.push(`UK flow unavailable: ${error.message}`);
+      }
+    }
+
+    const thresholds = {};
+    const typicalHigh = this.validNumber(station.stageScale && station.stageScale.typicalRangeHigh);
+    if (typicalHigh !== null) {
+      thresholds.action = { stage: typicalHigh, flow: null };
+    }
+
+    debug.gaugeMetadataReceived = Boolean(station.stationReference || station.notation);
+    debug.observedDataCount = observedPoints.length;
+    debug.forecastDataCount = 0;
+    debug.floodThresholds = thresholds;
+    debug.lastUpdateTime = latest ? latest.time.toISOString() : null;
+    debug.fallbackBehavior.push("UK Environment Agency provider currently renders observed readings only; NWPS-style forecast crest data is not available from this API.");
+
+    if (!observedPoints.length) debug.missingFields.push("readings.items");
+
+    return {
+      provider: "uk_ea",
+      metadata: station,
+      observed: readingsData,
+      forecast: null,
+      debug,
+      name: station.label || this.config.title || stationId,
+      id: station.stationReference || station.notation || stationId,
+      stage: latest ? latest.stage : null,
+      stageUnit: levelMeasure.unitName || "m",
+      flow,
+      flowUnit,
+      updated: latest ? latest.time.toISOString() : null,
+      trend: this.trend(latest, previous),
+      category: this.categoryFor(latest ? latest.stage : null, thresholds),
+      thresholds,
+      floodStage: null,
+      observedPoints,
+      forecastPoints: [],
+      crest: null,
+      impacts: [],
+      attribution: "This uses Environment Agency flood and river level data from the real-time data API (Beta).",
+      riverName: station.riverName || "",
+      typicalRangeHigh: typicalHigh,
+    };
+  }
+
+  httpsUrl(url) {
+    return String(url || "").replace(/^http:/, "https:");
+  }
+
+  pickEaMeasure(measures, parameter) {
+    const matching = measures.filter((measure) => measure && measure.parameter === parameter);
+    return matching.find((measure) => String(measure.qualifier || "").toLowerCase() === "stage")
+      || matching.find((measure) => String(measure.qualifier || "").toLowerCase().includes("stage"))
+      || matching[0]
+      || null;
+  }
+
+  normalizeEaReadings(items) {
+    if (!Array.isArray(items)) return [];
+    return items
+      .map((item) => ({
+        time: new Date(item.dateTime),
+        stage: this.validNumber(item.value),
+        flow: null,
+        generatedTime: item.dateTime,
+      }))
+      .filter((point) => point.stage !== null && !Number.isNaN(point.time.getTime()));
   }
 
   normalize(metadata, observed, forecast, debug) {
@@ -319,6 +437,14 @@ class RiverWiseCard extends HTMLElement {
   }
 
   forecastSummary(model) {
+    if (model.provider === "uk_ea") {
+      const trend = model.trend && model.trend.label ? model.trend.label : "steady";
+      const typical = model.typicalRangeHigh !== null && model.typicalRangeHigh !== undefined
+        ? ` Typical high is ${this.formatNumber(model.typicalRangeHigh, 2)} ${model.stageUnit}.`
+        : "";
+      return `Latest Environment Agency reading is ${this.formatNumber(model.stage, 2)} ${model.stageUnit} and ${trend}.${typical}`;
+    }
+
     if (!model.crest) {
       return "Forecast data is not available for this gauge.";
     }
@@ -632,6 +758,7 @@ class RiverWiseCard extends HTMLElement {
 
       ${this.renderHydrograph(model)}
       <div class="summary">${this.escape(this.forecastSummary(model))}</div>
+      ${model.attribution ? `<div class="subtle">${this.escape(model.attribution)}</div>` : ""}
       ${this.renderImpacts(model)}
     `;
   }
@@ -782,9 +909,12 @@ class RiverWiseCard extends HTMLElement {
 class RiverWiseCardEditor extends HTMLElement {
   setConfig(config) {
     this.config = {
+      provider: "us_nwps",
       title: "Ohio River at Meldahl Dam",
       gauge: "MELO1",
       gauge_state: "OH",
+      uk_station: "",
+      uk_search: "",
       units: "english",
       show_forecast: true,
       show_impacts: true,
@@ -801,6 +931,9 @@ class RiverWiseCardEditor extends HTMLElement {
     if (!Array.isArray(this.stateGaugeOptions)) this.stateGaugeOptions = [];
     if (typeof this.stateGaugeLoading !== "boolean") this.stateGaugeLoading = false;
     if (typeof this.stateGaugeError !== "string") this.stateGaugeError = "";
+    if (!Array.isArray(this.ukStationOptions)) this.ukStationOptions = [];
+    if (typeof this.ukStationLoading !== "boolean") this.ukStationLoading = false;
+    if (typeof this.ukStationError !== "string") this.ukStationError = "";
     this.render();
     if (this.config.gauge_state && this.lastStateLoaded !== this.config.gauge_state && !this.stateGaugeLoading) {
       this.loadStateGaugeOptions(this.config.gauge_state);
@@ -853,6 +986,44 @@ class RiverWiseCardEditor extends HTMLElement {
     }
   }
 
+  async searchUkStations(query) {
+    const search = String(query || "").trim();
+    if (!search) {
+      this.ukStationError = "Enter a place, river, or station name.";
+      this.render();
+      return;
+    }
+
+    this.ukStationLoading = true;
+    this.ukStationError = "";
+    this.render();
+
+    try {
+      const params = new URLSearchParams({
+        parameter: "level",
+        search,
+        _limit: "50",
+        _view: "full",
+      });
+      const response = await fetch(`https://environment.data.gov.uk/flood-monitoring/id/stations?${params.toString()}`, { mode: "cors" });
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const stations = Array.isArray(data.items) ? data.items : [];
+      this.ukStationOptions = stations
+        .filter((station) => station && (station.stationReference || station.notation) && station.label)
+        .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    } catch (error) {
+      this.ukStationOptions = [];
+      this.ukStationError = error.message;
+    } finally {
+      this.ukStationLoading = false;
+      this.render();
+    }
+  }
+
   async lookupGaugeName(gaugeId) {
     const id = String(gaugeId || "").trim().toUpperCase();
     if (!id) return;
@@ -879,6 +1050,41 @@ class RiverWiseCardEditor extends HTMLElement {
           gauge_state: metadata && metadata.state && metadata.state.abbreviation
             ? metadata.state.abbreviation
             : this.config.gauge_state,
+        }, false);
+      }
+    } catch (error) {
+      this.lookupError = error.message;
+    } finally {
+      this.lookupLoading = false;
+      this.render();
+    }
+  }
+
+  async lookupUkStationName(stationId) {
+    const id = String(stationId || "").trim();
+    if (!id) return;
+
+    this.lookupLoading = true;
+    this.lookupError = "";
+    this.lookupName = "";
+    this.render();
+
+    try {
+      const response = await fetch(`https://environment.data.gov.uk/flood-monitoring/id/stations/${encodeURIComponent(id)}`, { mode: "cors" });
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const station = data && data.items ? data.items : {};
+      this.lookupName = station.label || "";
+      if (this.lookupName) {
+        this.commitConfig({
+          ...this.config,
+          provider: "uk_ea",
+          uk_station: station.stationReference || station.notation || id,
+          gauge: station.stationReference || station.notation || id,
+          title: this.lookupName,
         }, false);
       }
     } catch (error) {
@@ -982,34 +1188,14 @@ class RiverWiseCardEditor extends HTMLElement {
         </div>
 
         <div class="row">
-          <label for="gauge-state">State</label>
-          <select id="gauge-state" data-key="gauge_state">
-            ${this.renderStateOptions()}
+          <label for="provider">Data source</label>
+          <select id="provider" data-key="provider">
+            <option value="us_nwps" ${this.config.provider !== "uk_ea" ? "selected" : ""}>US NOAA/NWS NWPS</option>
+            <option value="uk_ea" ${this.config.provider === "uk_ea" ? "selected" : ""}>UK Environment Agency</option>
           </select>
-          <div class="hint-block">Choose a state to load NOAA/NWS gauges for that state.</div>
         </div>
 
-        <div class="row">
-          <label for="gauge-select">Gauge</label>
-          <select id="gauge-select" data-key="gauge_select" ${this.stateGaugeLoading ? "disabled" : ""}>
-            ${this.renderGaugeOptions()}
-          </select>
-          <div class="hint-block">
-            ${this.stateGaugeLoading ? "Loading gauges..." : `${this.stateGaugeOptions.length} gauges loaded.`}
-            ${this.stateGaugeError ? `<br><span class="error">Gauge list failed: ${this.escape(this.stateGaugeError)}</span>` : ""}
-          </div>
-        </div>
-
-        <div class="row">
-          <label for="gauge">Manual gauge code</label>
-          <input id="gauge" data-key="gauge" value="${this.escape(this.config.gauge)}" placeholder="MELO1">
-          <button type="button" id="lookup-gauge" ${this.lookupLoading ? "disabled" : ""}>${this.lookupLoading ? "Looking up..." : "Look up code"}</button>
-          <div class="hint-block">
-            Optional: paste a known NWPS code here. The title will update from NOAA when the code is found.
-            ${this.lookupName ? `<br>Found: ${this.escape(this.lookupName)}` : ""}
-            ${this.lookupError ? `<br><span class="error">Gauge lookup failed: ${this.escape(this.lookupError)}</span>` : ""}
-          </div>
-        </div>
+        ${this.config.provider === "uk_ea" ? this.renderUkEditor() : this.renderUsEditor()}
 
         <div class="row">
           <label for="units">Units</label>
@@ -1039,8 +1225,86 @@ class RiverWiseCardEditor extends HTMLElement {
 
     const lookupButton = this.shadowRoot.querySelector("#lookup-gauge");
     if (lookupButton) {
-      lookupButton.addEventListener("click", () => this.lookupGaugeName(this.config.gauge));
+      lookupButton.addEventListener("click", () => {
+        if (this.config.provider === "uk_ea") {
+          this.lookupUkStationName(this.config.uk_station || this.config.gauge);
+        } else {
+          this.lookupGaugeName(this.config.gauge);
+        }
+      });
     }
+
+    const ukSearchButton = this.shadowRoot.querySelector("#search-uk-stations");
+    if (ukSearchButton) {
+      ukSearchButton.addEventListener("click", () => this.searchUkStations(this.config.uk_search));
+    }
+  }
+
+  renderUsEditor() {
+    return `
+      <div class="row">
+          <label for="gauge-state">State</label>
+          <select id="gauge-state" data-key="gauge_state">
+            ${this.renderStateOptions()}
+          </select>
+          <div class="hint-block">Choose a state to load NOAA/NWS gauges for that state.</div>
+        </div>
+
+        <div class="row">
+          <label for="gauge-select">Gauge</label>
+          <select id="gauge-select" data-key="gauge_select" ${this.stateGaugeLoading ? "disabled" : ""}>
+            ${this.renderGaugeOptions()}
+          </select>
+          <div class="hint-block">
+            ${this.stateGaugeLoading ? "Loading gauges..." : `${this.stateGaugeOptions.length} gauges loaded.`}
+            ${this.stateGaugeError ? `<br><span class="error">Gauge list failed: ${this.escape(this.stateGaugeError)}</span>` : ""}
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="gauge">Manual gauge code</label>
+          <input id="gauge" data-key="gauge" value="${this.escape(this.config.gauge)}" placeholder="MELO1">
+          <button type="button" id="lookup-gauge" ${this.lookupLoading ? "disabled" : ""}>${this.lookupLoading ? "Looking up..." : "Look up code"}</button>
+          <div class="hint-block">
+            Optional: paste a known NWPS code here. The title will update from NOAA when the code is found.
+            ${this.lookupName ? `<br>Found: ${this.escape(this.lookupName)}` : ""}
+            ${this.lookupError ? `<br><span class="error">Gauge lookup failed: ${this.escape(this.lookupError)}</span>` : ""}
+          </div>
+        </div>
+    `;
+  }
+
+  renderUkEditor() {
+    return `
+      <div class="row">
+        <label for="uk-search">UK station search</label>
+        <input id="uk-search" data-key="uk_search" value="${this.escape(this.config.uk_search || "")}" placeholder="Thames, York, Oxford">
+        <button type="button" id="search-uk-stations" ${this.ukStationLoading ? "disabled" : ""}>${this.ukStationLoading ? "Searching..." : "Search stations"}</button>
+        <div class="hint-block">Search by place, river, or station name.</div>
+      </div>
+
+      <div class="row">
+        <label for="uk-station-select">Station</label>
+        <select id="uk-station-select" data-key="uk_station_select" ${this.ukStationLoading ? "disabled" : ""}>
+          ${this.renderUkStationOptions()}
+        </select>
+        <div class="hint-block">
+          ${this.ukStationOptions.length ? `${this.ukStationOptions.length} stations loaded.` : "Search to load UK Environment Agency stations."}
+          ${this.ukStationError ? `<br><span class="error">Station search failed: ${this.escape(this.ukStationError)}</span>` : ""}
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="uk-station">Manual station reference</label>
+        <input id="uk-station" data-key="uk_station" value="${this.escape(this.config.uk_station || this.config.gauge || "")}" placeholder="1029TH">
+        <button type="button" id="lookup-gauge" ${this.lookupLoading ? "disabled" : ""}>${this.lookupLoading ? "Looking up..." : "Look up station"}</button>
+        <div class="hint-block">
+          Optional: paste a known Environment Agency station reference.
+          ${this.lookupName ? `<br>Found: ${this.escape(this.lookupName)}` : ""}
+          ${this.lookupError ? `<br><span class="error">Station lookup failed: ${this.escape(this.lookupError)}</span>` : ""}
+        </div>
+      </div>
+    `;
   }
 
   renderStateOptions() {
@@ -1080,6 +1344,33 @@ class RiverWiseCardEditor extends HTMLElement {
     return options.join("");
   }
 
+  renderUkStationOptions() {
+    const selectedStation = String(this.config.uk_station || this.config.gauge || "");
+    const hasSelected = this.ukStationOptions.some((station) => String(station.stationReference || station.notation) === selectedStation);
+    const options = [];
+
+    if (!hasSelected && selectedStation) {
+      options.push(`<option value="${this.escape(selectedStation)}" selected>${this.escape(selectedStation)} - current station</option>`);
+    }
+
+    if (!this.ukStationOptions.length) {
+      options.push(`<option value="${this.escape(selectedStation)}" selected>${this.ukStationLoading ? "Searching stations..." : "Search first"}</option>`);
+    }
+
+    this.ukStationOptions.forEach((station) => {
+      const id = String(station.stationReference || station.notation);
+      const selected = id === selectedStation ? "selected" : "";
+      const river = station.riverName ? ` - ${station.riverName}` : "";
+      options.push(`
+        <option value="${this.escape(id)}" data-name="${this.escape(station.label)}" ${selected}>
+          ${this.escape(station.label)} (${this.escape(id)})${this.escape(river)}
+        </option>
+      `);
+    });
+
+    return options.join("");
+  }
+
   renderToggle(key, label) {
     return `
       <label class="toggle">
@@ -1097,15 +1388,31 @@ class RiverWiseCardEditor extends HTMLElement {
 
     if (key === "gauge") {
       config.gauge = String(value).trim().toUpperCase();
+    } else if (key === "uk_station") {
+      config.provider = "uk_ea";
+      config.uk_station = String(value).trim();
+      config.gauge = config.uk_station;
     } else if (key === "gauge_state") {
       config.gauge_state = String(value).trim().toUpperCase();
     } else if (key === "gauge_select") {
+      config.provider = "us_nwps";
       config.gauge = String(value).trim().toUpperCase();
       const selectedOption = target.selectedOptions && target.selectedOptions[0];
       const selectedName = selectedOption ? selectedOption.dataset.name : "";
       if (selectedName) {
         config.title = selectedName;
       }
+    } else if (key === "uk_station_select") {
+      config.provider = "uk_ea";
+      config.uk_station = String(value).trim();
+      config.gauge = config.uk_station;
+      const selectedOption = target.selectedOptions && target.selectedOptions[0];
+      const selectedName = selectedOption ? selectedOption.dataset.name : "";
+      if (selectedName) {
+        config.title = selectedName;
+      }
+    } else if (key === "provider") {
+      config.provider = value;
     } else {
       config[key] = value;
     }
@@ -1113,6 +1420,8 @@ class RiverWiseCardEditor extends HTMLElement {
     this.commitConfig(config);
     if (key === "gauge") {
       this.lookupGaugeName(config.gauge);
+    } else if (key === "uk_station") {
+      this.lookupUkStationName(config.uk_station);
     } else if (key === "gauge_state") {
       this.stateGaugeOptions = [];
       this.loadStateGaugeOptions(config.gauge_state);
