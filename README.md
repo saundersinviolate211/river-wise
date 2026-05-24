@@ -16,6 +16,34 @@ RiverWise is a Home Assistant custom dashboard card for NOAA/NWS National Water 
 
 ## Installation
 
+### HACS
+
+Add this repository to HACS as a custom repository:
+
+```text
+https://github.com/TheWillMiller/river-wise
+```
+
+Category:
+
+```text
+Dashboard
+```
+
+After installing with HACS, add this dashboard resource if HACS does not add it automatically:
+
+```text
+/hacsfiles/river-wise/river-wise-card.js
+```
+
+Resource type:
+
+```text
+JavaScript module
+```
+
+### Manual
+
 Copy `river-wise-card.js` into your Home Assistant `www` folder:
 
 ```text
@@ -73,4 +101,3 @@ with bounding-box query parameters for the selected state.
 ## Notes
 
 Forecast data is not available for every gauge. RiverWise will still render observed data when forecast data is missing.
-
