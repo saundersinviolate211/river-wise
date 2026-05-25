@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.6
+
 ### Added
 
 - Added a release-notes template that avoids fenced install blocks so HACS release announcements do not render the rest of the message as code.
