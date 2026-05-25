@@ -5,6 +5,11 @@
 ### Added
 
 - Added a release-notes template that avoids fenced install blocks so HACS release announcements do not render the rest of the message as code.
+- Added a My Home Assistant / HACS repository badge to the README.
+
+### Fixed
+
+- Fixed out-of-view flood threshold labels rendering in inverted vertical order on the hydrograph.
 
 ## 0.2.5
 

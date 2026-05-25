@@ -832,15 +832,32 @@ class RiverWiseCard extends HTMLElement {
       moderate: "#c73535",
       major: "#7f4bc4",
     };
-    const thresholdY = (item, index) => {
-      if (item.stage > maxStage) return pad.top + index * 14;
-      if (item.stage < minStage) return height - pad.bottom - index * 14;
+    const aboveThresholds = thresholds
+      .filter((item) => item.stage > maxStage)
+      .sort((a, b) => b.stage - a.stage);
+    const belowThresholds = thresholds
+      .filter((item) => item.stage < minStage)
+      .sort((a, b) => a.stage - b.stage);
+    const thresholdY = (item) => {
+      if (item.stage > maxStage) {
+        return pad.top + aboveThresholds.findIndex((threshold) => threshold.key === item.key) * 14;
+      }
+      if (item.stage < minStage) {
+        return height - pad.bottom - belowThresholds.findIndex((threshold) => threshold.key === item.key) * 14;
+      }
       return y(item.stage);
     };
     const thresholdLabel = (item) => {
       const suffix = item.stage > maxStage ? " above view" : item.stage < minStage ? " below view" : "";
       return `${item.key} ${this.formatNumber(item.stage, 0)} ft${suffix}`;
     };
+    const renderedThresholds = thresholds
+      .map((item) => ({
+        ...item,
+        lineY: thresholdY(item),
+        outOfRange: item.stage > maxStage || item.stage < minStage,
+      }))
+      .sort((a, b) => a.lineY - b.lineY);
 
     return `
       <div class="legend">
@@ -856,12 +873,10 @@ class RiverWiseCard extends HTMLElement {
           <text class="axis-label" x="${pad.left - 7}" y="${y(tick) + 3}" text-anchor="end">${this.formatNumber(tick, 0)}</text>
         `).join("")}
 
-        ${thresholds.map((item, index) => {
-          const lineY = thresholdY(item, index);
-          const outOfRange = item.stage > maxStage || item.stage < minStage;
+        ${renderedThresholds.map((item) => {
           return `
-          <line class="threshold ${outOfRange ? "out-of-range" : ""}" x1="${pad.left}" x2="${width - pad.right}" y1="${lineY}" y2="${lineY}" stroke="${thresholdColor[item.key]}"></line>
-          <text x="${width - pad.right - 4}" y="${lineY - 4}" text-anchor="end" font-size="10" fill="${thresholdColor[item.key]}">${this.escape(thresholdLabel(item))}</text>
+          <line class="threshold ${item.outOfRange ? "out-of-range" : ""}" x1="${pad.left}" x2="${width - pad.right}" y1="${item.lineY}" y2="${item.lineY}" stroke="${thresholdColor[item.key]}"></line>
+          <text x="${width - pad.right - 4}" y="${item.lineY - 4}" text-anchor="end" font-size="10" fill="${thresholdColor[item.key]}">${this.escape(thresholdLabel(item))}</text>
           `;
         }).join("")}
 
